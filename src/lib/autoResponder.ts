@@ -34,7 +34,9 @@ async function detectLanguage(text: string): Promise<string> {
             ],
         });
 
-        return completion.choices[0].message.content?.toLowerCase() || "english";
+        return (
+            completion.choices[0]?.message?.content?.toLowerCase() || "english"
+        );
     } catch {
         return "english";
     }
@@ -42,10 +44,7 @@ async function detectLanguage(text: string): Promise<string> {
 
 /* ---------------- WHATSAPP RESPONSE FORMATTER ---------------- */
 function formatWhatsAppResponse(text: string): string {
-    return text
-        .replace(/\n{3,}/g, "\n\n")
-        .trim()
-        .slice(0, 900);
+    return text.replace(/\n{3,}/g, "\n\n").trim().slice(0, 900);
 }
 
 /* ---------------- MAIN AUTO RESPONDER ---------------- */
@@ -115,12 +114,16 @@ export async function generateAutoResponse(
             .order("received_at", { ascending: true })
             .limit(20);
 
-        const history = (historyRows || [])
-            .filter((m) => m.content_text)
-            .map((m) => ({
-                role: m.event_type === "MoMessage" ? "user" : "assistant",
-                content: m.content_text,
-            }));
+        const history: { role: "user" | "assistant"; content: string }[] =
+            (historyRows || [])
+                .filter((m) => m.content_text)
+                .map((m) => ({
+                    role:
+                        m.event_type === "MoMessage"
+                            ? "user"
+                            : "assistant",
+                    content: m.content_text as string,
+                }));
 
         const userName =
             historyRows?.find((h) => h.sender_name)?.sender_name || "";
@@ -139,7 +142,7 @@ export async function generateAutoResponse(
 
         const contextText = matches.map((m) => m.chunk).join("\n\n");
 
-        /* 6️⃣ SYSTEM PROMPT (STRICT BEHAVIOR RULES) */
+        /* 6️⃣ SYSTEM PROMPT */
         const systemPrompt = `
 ${system_prompt || "You are a helpful WhatsApp assistant."}
 
@@ -169,19 +172,24 @@ CONTEXT (use only if helpful):
 ${contextText || ""}
 `;
 
-        /* 7️⃣ LLM GENERATION */
+        /* 7️⃣ LLM GENERATION (TYPE SAFE) */
+        const messages: {
+            role: "system" | "user" | "assistant";
+            content: string;
+        }[] = [
+            { role: "system", content: systemPrompt },
+            ...history.slice(-10),
+            { role: "user", content: finalUserText },
+        ];
+
         const completion = await groq.chat.completions.create({
             model: "llama-3.3-70b-versatile",
             temperature: 0.3,
             max_tokens: 500,
-            messages: [
-                { role: "system", content: systemPrompt },
-                ...history.slice(-10),
-                { role: "user", content: finalUserText },
-            ],
+            messages,
         });
 
-        let response = completion.choices[0].message.content;
+        let response = completion.choices[0]?.message?.content;
 
         if (!response) {
             return { success: false, error: "Empty AI response" };
