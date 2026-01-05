@@ -5,23 +5,36 @@ import { speechToText } from "@/lib/speechToText";
 import { processBusinessCard } from "@/lib/businessCard/businessCardOCR";
 import { handleConfirmationReply } from "@/lib/businessCard/confirmationHandler";
 import { buildCardPreviewMessage } from "@/lib/businessCard/whatsappPreview";
-import { sendWhatsAppMessage } from "@/lib/whatsappSender"; // ✅ FIX
-
-
+import { sendWhatsAppMessage } from "@/lib/whatsappSender";
 
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
-
     console.log("📩 Webhook Received:", payload);
 
     if (!payload.messageId || !payload.from || !payload.to) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    /* -----------------------------------
-     * 1️⃣ SAVE RAW MESSAGE
-     * ----------------------------------- */
+    /* --------------------------------------------------
+     * 1️⃣ FETCH WHATSAPP CONFIG (CRITICAL FIX)
+     * -------------------------------------------------- */
+    const { data: phoneConfig } = await supabase
+      .from("phone_document_mapping")
+      .select("auth_token, origin")
+      .eq("phone_number", payload.to)
+      .single();
+
+    if (!phoneConfig?.auth_token || !phoneConfig?.origin) {
+      console.error("❌ WhatsApp config missing");
+      return NextResponse.json({ success: false });
+    }
+
+    const { auth_token, origin } = phoneConfig;
+
+    /* --------------------------------------------------
+     * 2️⃣ SAVE RAW MESSAGE
+     * -------------------------------------------------- */
     const { error } = await supabase.from("whatsapp_messages").insert([
       {
         message_id: payload.messageId,
@@ -43,9 +56,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    /* -----------------------------------
-     * 2️⃣ MESSAGE NORMALIZATION
-     * ----------------------------------- */
+    /* --------------------------------------------------
+     * 3️⃣ MESSAGE NORMALIZATION
+     * -------------------------------------------------- */
     let finalText: string | null = null;
     let mediaUrl: string | null = null;
     let isImage = false;
@@ -73,9 +86,9 @@ export async function POST(req: Request) {
       }
     }
 
-    /* -----------------------------------
-     * 3️⃣ IMAGE → OCR PIPELINE
-     * ----------------------------------- */
+    /* --------------------------------------------------
+     * 4️⃣ IMAGE → OCR PIPELINE (PHASE-2)
+     * -------------------------------------------------- */
     if (isImage && mediaUrl) {
       const scan = await processBusinessCard(mediaUrl, payload.from);
 
@@ -83,21 +96,27 @@ export async function POST(req: Request) {
         await sendWhatsAppMessage(
           payload.from,
           "❌ Sorry, I couldn’t read this card. Please send a clearer image.",
-          payload.to
+          auth_token,
+          origin
         );
         return NextResponse.json({ success: true });
       }
 
       const preview = buildCardPreviewMessage(scan.data);
 
-      await sendWhatsAppMessage(payload.from, preview, payload.to);
+      await sendWhatsAppMessage(
+        payload.from,
+        preview,
+        auth_token,
+        origin
+      );
 
       return NextResponse.json({ success: true, routed: "ocr" });
     }
 
-    /* -----------------------------------
-     * 4️⃣ PHASE-3 CONFIRMATION HANDLER
-     * ----------------------------------- */
+    /* --------------------------------------------------
+     * 5️⃣ PHASE-3 CONFIRMATION / EDIT HANDLER
+     * -------------------------------------------------- */
     if (finalText) {
       const decision = handleConfirmationReply(finalText);
 
@@ -110,9 +129,7 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        if (!session) {
-          return NextResponse.json({ success: true });
-        }
+        if (!session) return NextResponse.json({ success: true });
 
         // ✅ CONFIRM
         if (decision === "confirmed") {
@@ -124,7 +141,8 @@ export async function POST(req: Request) {
           await sendWhatsAppMessage(
             payload.from,
             "✅ Contact saved successfully! 😊",
-            payload.to
+            auth_token,
+            origin
           );
 
           return NextResponse.json({ success: true });
@@ -140,7 +158,8 @@ export async function POST(req: Request) {
           await sendWhatsAppMessage(
             payload.from,
             "❌ No worries! Scan cancelled.",
-            payload.to
+            auth_token,
+            origin
           );
 
           return NextResponse.json({ success: true });
@@ -160,16 +179,21 @@ export async function POST(req: Request) {
 
           const preview = buildCardPreviewMessage(updated);
 
-          await sendWhatsAppMessage(payload.from, preview, payload.to);
+          await sendWhatsAppMessage(
+            payload.from,
+            preview,
+            auth_token,
+            origin
+          );
 
           return NextResponse.json({ success: true });
         }
       }
     }
 
-    /* -----------------------------------
-     * 5️⃣ NORMAL CHAT → AI BOT
-     * ----------------------------------- */
+    /* --------------------------------------------------
+     * 6️⃣ NORMAL CHAT → EXISTING AI BOT
+     * -------------------------------------------------- */
     if (finalText) {
       await generateAutoResponse(
         payload.from,
