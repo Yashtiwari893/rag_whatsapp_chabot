@@ -149,8 +149,7 @@ export async function POST(req: Request) {
         }
 
         // ❌ CANCEL
-        if (decision === "cancelled") {
-          await supabase
+        if (decision === "rejected") {          await supabase
             .from("card_scan_sessions")
             .update({ status: "cancelled" })
             .eq("id", session.id);
