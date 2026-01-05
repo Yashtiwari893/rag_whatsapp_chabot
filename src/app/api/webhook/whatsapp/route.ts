@@ -118,7 +118,7 @@ export async function POST(req: Request) {
      * 5️⃣ PHASE-3 CONFIRMATION / EDIT HANDLER
      * -------------------------------------------------- */
     if (finalText) {
-      const decision = handleConfirmationReply(finalText);
+      const decision = handleConfirmationReply(finalText, "auto");
 
       if (decision) {
         const { data: session } = await supabase
