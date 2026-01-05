@@ -5,6 +5,8 @@ import { speechToText } from "@/lib/speechToText";
 import { processBusinessCard } from "@/lib/businessCard/businessCardOCR";
 import { handleConfirmationReply } from "@/lib/businessCard/confirmationHandler";
 import { buildCardPreviewMessage } from "@/lib/businessCard/whatsappPreview";
+import { sendWhatsAppMessage } from "@/lib/whatsappSender"; // ✅ FIX
+
 
 
 export async function POST(req: Request) {
