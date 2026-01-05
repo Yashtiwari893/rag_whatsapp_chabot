@@ -9,6 +9,12 @@ type WhatsAppPayload = {
   };
 };
 
+export type MessageIntent =
+  | "CARD_SCAN"
+  | "VOICE_COMMAND"
+  | "TEXT_COMMAND"
+  | "UNKNOWN";
+
 export function detectMessageIntent(
   payload: WhatsAppPayload
 ): MessageIntent {

@@ -111,7 +111,9 @@ export async function generateAutoResponse(
       .order("received_at", { ascending: true })
       .limit(20);
 
-    const history = (historyRows || [])
+    const history: { role: "user" | "assistant"; content: string }[] = (
+      historyRows || []
+    )
       .filter((m) => m.content_text)
       .map((m) => ({
         role: m.event_type === "MoMessage" ? "user" : "assistant",

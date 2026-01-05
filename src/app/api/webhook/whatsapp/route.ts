@@ -165,7 +165,12 @@ export async function POST(req: Request) {
         }
 
         // ✏️ EDIT FLOW
-        if (typeof decision === "object") {
+        if (
+          decision &&
+          typeof decision === "object" &&
+          "type" in decision &&
+          decision.type === "edit"
+        ) {
           const updated = {
             ...session.structured_data,
             [decision.editField]: decision.newValue,
