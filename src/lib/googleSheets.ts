@@ -1,27 +1,28 @@
-import { google } from "googleapis";
+export async function pushToGoogleSheet(data: {
+  name: string;
+  phone: string;
+  email: string;
+  company: string;
+  designation: string;
+  address: string;
+  source?: string;
+}) {
+  const SHEET_WEBHOOK = process.env.GOOGLE_SHEET_WEBHOOK!;
 
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!),
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-
-export async function pushToGoogleSheet(data: any) {
-  const sheets = google.sheets({ version: "v4", auth });
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.GOOGLE_SHEET_ID!,
-    range: "Sheet1!A1",
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [[
-        data.name,
-        data.phone,
-        data.email,
-        data.company,
-        data.designation,
-        data.address,
-        new Date().toISOString(),
-      ]],
-    },
+  const res = await fetch(SHEET_WEBHOOK, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...data,
+      source: data.source || "WhatsApp",
+    }),
   });
+
+  const json = await res.json();
+
+  if (!json.success) {
+    throw new Error("Google Sheet update failed");
+  }
+
+  return true;
 }

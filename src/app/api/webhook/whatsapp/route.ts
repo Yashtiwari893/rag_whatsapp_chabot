@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
-import { generateAutoResponse } from "@/lib/autoResponder";
 import { speechToText } from "@/lib/speechToText";
 import { processBusinessCard } from "@/lib/businessCard/businessCardOCR";
 import { handleConfirmationReply } from "@/lib/businessCard/confirmationHandler";
@@ -10,16 +9,22 @@ import { sendWhatsAppMessage } from "@/lib/whatsappSender";
 /* -----------------------------------
  * TYPES
  * ----------------------------------- */
+type EditDecision = {
+  type: "edit";
+  editField: string;
+  newValue: string;
+};
+
 type ConfirmationDecision =
   | "confirmed"
   | "rejected"
-  | { type: "edit"; editField: string; newValue: string }
+  | EditDecision
   | null;
 
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
-    console.log("📩 Webhook Received:", payload);
+    console.log("📩 Webhook Received");
 
     if (!payload?.messageId || !payload?.from || !payload?.to) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -34,7 +39,7 @@ export async function POST(req: Request) {
       .eq("phone_number", payload.to)
       .single();
 
-    if (!phoneConfig?.auth_token || !phoneConfig?.origin) {
+    if (!phoneConfig) {
       console.error("❌ WhatsApp config missing");
       return NextResponse.json({ success: false });
     }
@@ -42,36 +47,29 @@ export async function POST(req: Request) {
     const { auth_token, origin } = phoneConfig;
 
     /* --------------------------------------------------
-     * 2️⃣ SAVE RAW MESSAGE
+     * 2️⃣ SAVE RAW MESSAGE (SAFE)
      * -------------------------------------------------- */
-    const { error: insertError } = await supabase
-      .from("whatsapp_messages")
-      .insert([
-        {
-          message_id: payload.messageId,
-          channel: payload.channel,
-          from_number: payload.from,
-          to_number: payload.to,
-          received_at: payload.receivedAt,
-          content_type: payload.content?.contentType,
-          content_text: payload.content?.text || null,
-          sender_name: payload.whatsapp?.senderName || null,
-          event_type: payload.event,
-          raw_payload: payload,
-        },
-      ]);
+    await supabase.from("whatsapp_messages").insert([
+      {
+        message_id: payload.messageId,
+        channel: payload.channel,
+        from_number: payload.from,
+        to_number: payload.to,
+        received_at: payload.receivedAt,
+        content_type: payload.content?.contentType,
+        content_text: payload.content?.text || null,
+        sender_name: payload.whatsapp?.senderName || null,
+        event_type: payload.event,
+        raw_payload: payload,
+      },
+    ]);
 
-    if (insertError && insertError.code !== "23505") {
-      throw insertError;
-    }
-
-    // Only respond to incoming user messages
     if (payload.event !== "MoMessage") {
       return NextResponse.json({ success: true });
     }
 
     /* --------------------------------------------------
-     * 3️⃣ MESSAGE NORMALIZATION
+     * 3️⃣ NORMALIZE MESSAGE
      * -------------------------------------------------- */
     let finalText: string | null = null;
     let mediaUrl: string | null = null;
@@ -101,26 +99,28 @@ export async function POST(req: Request) {
     }
 
     /* --------------------------------------------------
-     * 4️⃣ IMAGE → OCR PIPELINE (PHASE-2)
+     * 4️⃣ IMAGE → OCR PIPELINE
      * -------------------------------------------------- */
     if (isImage && mediaUrl) {
+      console.log("🪪 Image received → OCR");
+
       const scan = await processBusinessCard(mediaUrl, payload.from);
 
       if (!scan.success || !scan.data) {
         await sendWhatsAppMessage(
           payload.from,
-          "❌ Sorry, I couldn’t read this card. Please send a clearer image.",
+          "❌ Card read nahi ho paya. Please clear image bheje.",
           auth_token,
           origin
         );
         return NextResponse.json({ success: true });
       }
 
-      const previewMessage = buildCardPreviewMessage(scan.data);
+      const preview = buildCardPreviewMessage(scan.data);
 
       await sendWhatsAppMessage(
         payload.from,
-        previewMessage,
+        preview,
         auth_token,
         origin
       );
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
     }
 
     /* --------------------------------------------------
-     * 5️⃣ PHASE-3 CONFIRM / EDIT HANDLER
+     * 5️⃣ CONFIRMATION / EDIT HANDLER
      * -------------------------------------------------- */
     if (finalText) {
       const decision = (await handleConfirmationReply(
@@ -137,89 +137,79 @@ export async function POST(req: Request) {
         "auto"
       )) as ConfirmationDecision;
 
-      if (decision) {
-        const { data: session } = await supabase
-          .from("card_scan_sessions")
-          .select("*")
-          .eq("from_number", payload.from)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-
-        if (!session) {
-          return NextResponse.json({ success: true });
-        }
-
-        // ✅ CONFIRM
-        if (decision === "confirmed") {
-          await supabase
-            .from("card_scan_sessions")
-            .update({ status: "confirmed" })
-            .eq("id", session.id);
-
-          await sendWhatsAppMessage(
-            payload.from,
-            "✅ Contact saved successfully! 😊",
-            auth_token,
-            origin
-          );
-
-          return NextResponse.json({ success: true });
-        }
-
-        // ❌ REJECT
-        if (decision === "rejected") {
-          await supabase
-            .from("card_scan_sessions")
-            .update({ status: "cancelled" })
-            .eq("id", session.id);
-
-          await sendWhatsAppMessage(
-            payload.from,
-            "❌ No worries! Scan cancelled.",
-            auth_token,
-            origin
-          );
-
-          return NextResponse.json({ success: true });
-        }
-
-        // ✏️ EDIT FLOW
-        if (typeof decision === "object" && decision.type === "edit") {
-          const updatedData = {
-            ...session.structured_data,
-            [decision.editField]: decision.newValue,
-          };
-
-          await supabase
-            .from("card_scan_sessions")
-            .update({ structured_data: updatedData })
-            .eq("id", session.id);
-
-          const preview = buildCardPreviewMessage(updatedData);
-
-          await sendWhatsAppMessage(
-            payload.from,
-            preview,
-            auth_token,
-            origin
-          );
-
-          return NextResponse.json({ success: true });
-        }
+      if (!decision) {
+        return NextResponse.json({ success: true });
       }
-    }
 
-    /* --------------------------------------------------
-     * 6️⃣ NORMAL CHAT → RAG AI BOT
-     * -------------------------------------------------- */
-    if (finalText) {
-      await generateAutoResponse(
-        payload.from,
-        payload.to,
-        finalText,
-        payload.messageId
-      );
+      const { data: session } = await supabase
+        .from("card_scan_sessions")
+        .select("*")
+        .eq("from_number", payload.from)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!session) {
+        return NextResponse.json({ success: true });
+      }
+
+      // ✅ CONFIRM
+      if (decision === "confirmed") {
+        await supabase
+          .from("card_scan_sessions")
+          .update({ status: "confirmed" })
+          .eq("id", session.id);
+
+        await sendWhatsAppMessage(
+          payload.from,
+          "✅ Card saved successfully!",
+          auth_token,
+          origin
+        );
+
+        return NextResponse.json({ success: true });
+      }
+
+      // ❌ REJECT
+      if (decision === "rejected") {
+        await supabase
+          .from("card_scan_sessions")
+          .update({ status: "cancelled" })
+          .eq("id", session.id);
+
+        await sendWhatsAppMessage(
+          payload.from,
+          "❌ Scan cancelled.",
+          auth_token,
+          origin
+        );
+
+        return NextResponse.json({ success: true });
+      }
+
+      // ✏️ EDIT
+      if (typeof decision === "object" && decision.type === "edit") {
+        const updatedData = {
+          ...session.structured_data,
+          [decision.editField]: decision.newValue,
+        };
+
+        await supabase
+          .from("card_scan_sessions")
+          .update({ structured_data: updatedData })
+          .eq("id", session.id);
+
+        const preview = buildCardPreviewMessage(updatedData);
+
+        await sendWhatsAppMessage(
+          payload.from,
+          preview,
+          auth_token,
+          origin
+        );
+
+        return NextResponse.json({ success: true });
+      }
     }
 
     return NextResponse.json({ success: true });
