@@ -7,17 +7,26 @@ import { handleConfirmationReply } from "@/lib/businessCard/confirmationHandler"
 import { buildCardPreviewMessage } from "@/lib/businessCard/whatsappPreview";
 import { sendWhatsAppMessage } from "@/lib/whatsappSender";
 
+/* -----------------------------------
+ * TYPES
+ * ----------------------------------- */
+type ConfirmationDecision =
+  | "confirmed"
+  | "rejected"
+  | { type: "edit"; editField: string; newValue: string }
+  | null;
+
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
     console.log("📩 Webhook Received:", payload);
 
-    if (!payload.messageId || !payload.from || !payload.to) {
+    if (!payload?.messageId || !payload?.from || !payload?.to) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
     /* --------------------------------------------------
-     * 1️⃣ FETCH WHATSAPP CONFIG (CRITICAL FIX)
+     * 1️⃣ FETCH WHATSAPP CONFIG (11za)
      * -------------------------------------------------- */
     const { data: phoneConfig } = await supabase
       .from("phone_document_mapping")
@@ -35,23 +44,28 @@ export async function POST(req: Request) {
     /* --------------------------------------------------
      * 2️⃣ SAVE RAW MESSAGE
      * -------------------------------------------------- */
-    const { error } = await supabase.from("whatsapp_messages").insert([
-      {
-        message_id: payload.messageId,
-        channel: payload.channel,
-        from_number: payload.from,
-        to_number: payload.to,
-        received_at: payload.receivedAt,
-        content_type: payload.content?.contentType,
-        content_text: payload.content?.text || null,
-        sender_name: payload.whatsapp?.senderName || null,
-        event_type: payload.event,
-        raw_payload: payload,
-      },
-    ]);
+    const { error: insertError } = await supabase
+      .from("whatsapp_messages")
+      .insert([
+        {
+          message_id: payload.messageId,
+          channel: payload.channel,
+          from_number: payload.from,
+          to_number: payload.to,
+          received_at: payload.receivedAt,
+          content_type: payload.content?.contentType,
+          content_text: payload.content?.text || null,
+          sender_name: payload.whatsapp?.senderName || null,
+          event_type: payload.event,
+          raw_payload: payload,
+        },
+      ]);
 
-    if (error && error.code !== "23505") throw error;
+    if (insertError && insertError.code !== "23505") {
+      throw insertError;
+    }
 
+    // Only respond to incoming user messages
     if (payload.event !== "MoMessage") {
       return NextResponse.json({ success: true });
     }
@@ -63,11 +77,11 @@ export async function POST(req: Request) {
     let mediaUrl: string | null = null;
     let isImage = false;
 
-    if (payload.content.contentType === "text") {
+    if (payload.content?.contentType === "text") {
       finalText = payload.content.text?.trim() || null;
     }
 
-    if (payload.content.contentType === "media") {
+    if (payload.content?.contentType === "media") {
       mediaUrl = payload.content.media?.url || null;
 
       if (
@@ -102,23 +116,26 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: true });
       }
 
-      const preview = buildCardPreviewMessage(scan.data);
+      const previewMessage = buildCardPreviewMessage(scan.data);
 
       await sendWhatsAppMessage(
         payload.from,
-        preview,
+        previewMessage,
         auth_token,
         origin
       );
 
-      return NextResponse.json({ success: true, routed: "ocr" });
+      return NextResponse.json({ success: true, routed: "ocr_preview" });
     }
 
     /* --------------------------------------------------
-     * 5️⃣ PHASE-3 CONFIRMATION / EDIT HANDLER
+     * 5️⃣ PHASE-3 CONFIRM / EDIT HANDLER
      * -------------------------------------------------- */
     if (finalText) {
-      const decision = await handleConfirmationReply(finalText, "auto");
+      const decision = (await handleConfirmationReply(
+        finalText,
+        "auto"
+      )) as ConfirmationDecision;
 
       if (decision) {
         const { data: session } = await supabase
@@ -129,7 +146,9 @@ export async function POST(req: Request) {
           .limit(1)
           .single();
 
-        if (!session) return NextResponse.json({ success: true });
+        if (!session) {
+          return NextResponse.json({ success: true });
+        }
 
         // ✅ CONFIRM
         if (decision === "confirmed") {
@@ -148,8 +167,9 @@ export async function POST(req: Request) {
           return NextResponse.json({ success: true });
         }
 
-        // ❌ CANCEL
-        if (decision === "rejected") {          await supabase
+        // ❌ REJECT
+        if (decision === "rejected") {
+          await supabase
             .from("card_scan_sessions")
             .update({ status: "cancelled" })
             .eq("id", session.id);
@@ -165,23 +185,18 @@ export async function POST(req: Request) {
         }
 
         // ✏️ EDIT FLOW
-        if (
-          decision &&
-          typeof decision === "object" &&
-          "type" in decision &&
-          decision.type === "edit"
-        ) {
-          const updated = {
+        if (typeof decision === "object" && decision.type === "edit") {
+          const updatedData = {
             ...session.structured_data,
             [decision.editField]: decision.newValue,
           };
 
           await supabase
             .from("card_scan_sessions")
-            .update({ structured_data: updated })
+            .update({ structured_data: updatedData })
             .eq("id", session.id);
 
-          const preview = buildCardPreviewMessage(updated);
+          const preview = buildCardPreviewMessage(updatedData);
 
           await sendWhatsAppMessage(
             payload.from,
@@ -196,7 +211,7 @@ export async function POST(req: Request) {
     }
 
     /* --------------------------------------------------
-     * 6️⃣ NORMAL CHAT → EXISTING AI BOT
+     * 6️⃣ NORMAL CHAT → RAG AI BOT
      * -------------------------------------------------- */
     if (finalText) {
       await generateAutoResponse(
@@ -209,7 +224,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("WEBHOOK ERROR:", err);
+    console.error("🔥 WEBHOOK ERROR:", err);
     return NextResponse.json(
       { error: "Webhook processing failed" },
       { status: 500 }

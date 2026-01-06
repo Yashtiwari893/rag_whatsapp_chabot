@@ -1,35 +1,46 @@
 import Groq from "groq-sdk";
-import { supabase } from "../supabaseClient"; // ✅ FIXED PATH
+import { supabase } from "../supabaseClient"; // ✅ correct relative path
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY!,
 });
 
+/* -----------------------------------
+ * TYPES
+ * ----------------------------------- */
+export type BusinessCardData = {
+  name: string;
+  phone: string;
+  email: string;
+  company: string;
+  designation: string;
+  address: string;
+};
+
 export type BusinessCardResult = {
   success: boolean;
-  data?: {
-    name: string;
-    phone: string;
-    email: string;
-    company: string;
-    designation: string;
-    address: string;
-  };
+  data?: BusinessCardData;
   rawText?: string;
   error?: string;
 };
 
+/* -----------------------------------
+ * MAIN OCR FUNCTION
+ * ----------------------------------- */
 export async function processBusinessCard(
   imageUrl: string,
   fromNumber: string
 ): Promise<BusinessCardResult> {
   try {
+    console.log("🪪 Starting OCR for:", imageUrl);
+
     /* -----------------------------------
-     * 1️⃣ OCR + STRUCTURING
+     * 1️⃣ OCR + STRUCTURING (VISION MODEL)
      * ----------------------------------- */
     const completion = await groq.chat.completions.create({
       model: "llama-3.2-90b-vision-preview",
       temperature: 0,
+      max_tokens: 500,
       messages: [
         {
           role: "system",
@@ -37,11 +48,11 @@ export async function processBusinessCard(
 You are an expert business card reader.
 
 TASK:
-1. Read the business card image
-2. Extract contact details
-3. Return STRICT JSON only
+- Read the business card image
+- Extract contact details
+- Return STRICT JSON only
 
-FIELDS:
+JSON FORMAT:
 {
   "name": "",
   "phone": "",
@@ -54,8 +65,10 @@ FIELDS:
 RULES:
 - Phone must include country code if visible
 - If field not found, return empty string
-- NO explanations, ONLY JSON
-          `,
+- NO explanations
+- NO markdown
+- ONLY pure JSON
+          `.trim(),
         },
         {
           role: "user",
@@ -72,31 +85,64 @@ RULES:
     const rawResponse = completion.choices[0]?.message?.content;
 
     if (!rawResponse) {
+      console.error("❌ Empty OCR response");
       return { success: false, error: "Empty OCR response" };
     }
+
+    console.log("📄 OCR Raw Response:", rawResponse);
 
     /* -----------------------------------
      * 2️⃣ SAFE JSON PARSE
      * ----------------------------------- */
-    let structuredData;
+    let structuredData: BusinessCardData;
+
     try {
       structuredData = JSON.parse(rawResponse);
-    } catch {
-      return { success: false, error: "Invalid JSON from OCR" };
+    } catch (err) {
+      console.error("❌ JSON parse failed:", err);
+      return {
+        success: false,
+        error: "OCR returned invalid JSON",
+        rawText: rawResponse,
+      };
     }
 
     /* -----------------------------------
-     * 3️⃣ STORE SESSION
+     * 3️⃣ BASIC DATA NORMALIZATION
      * ----------------------------------- */
-    await supabase.from("card_scan_sessions").insert([
-      {
-        from_number: fromNumber,
-        image_url: imageUrl,
-        raw_text: rawResponse,
-        structured_data: structuredData,
-        status: "pending",
-      },
-    ]);
+    structuredData = {
+      name: structuredData.name || "",
+      phone: structuredData.phone || "",
+      email: structuredData.email || "",
+      company: structuredData.company || "",
+      designation: structuredData.designation || "",
+      address: structuredData.address || "",
+    };
+
+    /* -----------------------------------
+     * 4️⃣ STORE SESSION IN DB
+     * ----------------------------------- */
+    const { error: dbError } = await supabase
+      .from("card_scan_sessions")
+      .insert([
+        {
+          from_number: fromNumber,
+          image_url: imageUrl,
+          raw_text: rawResponse,
+          structured_data: structuredData,
+          status: "pending", // ⏳ confirmation phase
+        },
+      ]);
+
+    if (dbError) {
+      console.error("❌ DB insert failed:", dbError);
+      return {
+        success: false,
+        error: "Failed to save scan session",
+      };
+    }
+
+    console.log("✅ OCR + DB save successful");
 
     return {
       success: true,
@@ -104,7 +150,7 @@ RULES:
       rawText: rawResponse,
     };
   } catch (error) {
-    console.error("Business Card OCR Error:", error);
+    console.error("🔥 Business Card OCR Error:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "OCR failed",
