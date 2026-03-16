@@ -94,7 +94,7 @@ export async function sendWhatsAppAudio(
             authToken: authToken,
             originWebsite: originWebsite,
             contentType: "audio",
-            media: audioUrl,
+            mediaUrl: audioUrl,
         };
 
         console.log(`Sending WhatsApp audio to ${phoneNumber}... URL: ${audioUrl}`);
