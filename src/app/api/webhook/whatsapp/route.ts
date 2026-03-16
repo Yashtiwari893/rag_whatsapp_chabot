@@ -5,6 +5,7 @@ import { processBusinessCard } from "@/lib/businessCard/businessCardOCR";
 import { handleConfirmationReply } from "@/lib/businessCard/confirmationHandler";
 import { buildCardPreviewMessage } from "@/lib/businessCard/whatsappPreview";
 import { sendWhatsAppMessage } from "@/lib/whatsappSender";
+import { generateAutoResponse } from "@/lib/autoResponder";
 
 /* -----------------------------------
  * TYPES
@@ -211,8 +212,23 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: true });
       }
     }
+    /* --------------------------------------------------
+     * 6️⃣ DEFAULT: RAG AUTO-RESPONDER
+     * -------------------------------------------------- */
+    console.log("🤖 Routing to RAG Auto-Responder");
+    const result = await generateAutoResponse(
+      payload.from,
+      payload.to,
+      payload.content?.text || null,
+      payload.messageId,
+      mediaUrl || undefined // Pass mediaUrl for voice-to-voice support
+    );
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true, 
+      responded: result.success,
+      error: result.error 
+    });
   } catch (err) {
     console.error("🔥 WEBHOOK ERROR:", err);
     return NextResponse.json(
