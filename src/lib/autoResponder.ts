@@ -86,7 +86,8 @@ export async function generateAutoResponse(
     /* 3️⃣ INPUT NORMALIZATION */
     let userText = messageText?.trim() || "";
     let language = "english";
-    const isVoiceRequest = !!mediaUrl && !messageText;
+    // Check if it's a voice request (either directly from mediaUrl or already transcribed)
+    const isVoiceRequest = !!mediaUrl;
 
     if (!userText && mediaUrl) {
       const transcript = await speechToText(mediaUrl);
@@ -97,8 +98,11 @@ export async function generateAutoResponse(
       language = transcript.language || (await detectLanguage(userText));
     }
 
-    if (userText && !isVoiceRequest) {
-      language = await detectLanguage(userText);
+    if (userText) {
+      // Always detect language if not already set
+      if (language === "english" || language === "unknown") {
+        language = await detectLanguage(userText);
+      }
     }
 
     if (!userText) {
