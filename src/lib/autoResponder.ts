@@ -185,11 +185,11 @@ ${contextText || ""}
         const audioBuffer = await textToSpeech(response, language);
 
         // Upload to Supabase Storage
-        const fileName = `reply_${messageId}_${Date.now()}.wav`;
+        const fileName = `reply_${messageId}_${Date.now()}.mp3`;
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from("voice_replies")
           .upload(fileName, audioBuffer, {
-            contentType: "audio/wav",
+            contentType: "audio/mpeg",
             upsert: true,
           });
 
