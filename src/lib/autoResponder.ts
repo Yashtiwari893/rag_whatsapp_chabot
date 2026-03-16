@@ -2,8 +2,9 @@ import { supabase } from "./supabaseClient";
 import { embedText } from "./embeddings";
 import { retrieveRelevantChunksFromFiles } from "./retrieval";
 import { getFilesForPhoneNumber } from "./phoneMapping";
-import { sendWhatsAppMessage } from "./whatsappSender";
+import { sendWhatsAppMessage, sendWhatsAppAudio } from "./whatsappSender";
 import { speechToText } from "./speechToText";
+import { textToSpeech } from "./nvidiaTts";
 import Groq from "groq-sdk";
 
 const groq = new Groq({
@@ -85,6 +86,7 @@ export async function generateAutoResponse(
     /* 3️⃣ INPUT NORMALIZATION */
     let userText = messageText?.trim() || "";
     let language = "english";
+    const isVoiceRequest = !!mediaUrl && !messageText;
 
     if (!userText && mediaUrl) {
       const transcript = await speechToText(mediaUrl);
@@ -95,7 +97,7 @@ export async function generateAutoResponse(
       language = transcript.language || (await detectLanguage(userText));
     }
 
-    if (userText) {
+    if (userText && !isVoiceRequest) {
       language = await detectLanguage(userText);
     }
 
@@ -169,13 +171,58 @@ ${contextText || ""}
 
     response = formatWhatsAppResponse(response);
 
-    /* 8️⃣ SEND WHATSAPP */
-    const send = await sendWhatsAppMessage(
-      fromNumber,
-      response,
-      auth_token,
-      origin
-    );
+    /* 8️⃣ SEND RESPONSE (Text or Audio) */
+    let send;
+    let finalResponseUrl = "";
+
+    if (isVoiceRequest) {
+      try {
+        // Convert to Speech
+        const audioBuffer = await textToSpeech(response, language);
+
+        // Upload to Supabase Storage
+        const fileName = `reply_${messageId}_${Date.now()}.wav`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from("voice_replies")
+          .upload(fileName, audioBuffer, {
+            contentType: "audio/wav",
+            upsert: true,
+          });
+
+        if (uploadError) throw uploadError;
+
+        // Get Public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from("voice_replies")
+          .getPublicUrl(fileName);
+
+        finalResponseUrl = publicUrl;
+
+        // Send Audio
+        send = await sendWhatsAppAudio(
+          fromNumber,
+          finalResponseUrl,
+          auth_token,
+          origin
+        );
+      } catch (audioErr) {
+        console.error("Audio processing failed, falling back to text:", audioErr);
+        send = await sendWhatsAppMessage(
+          fromNumber,
+          response,
+          auth_token,
+          origin
+        );
+      }
+    } else {
+      // Normal Text Message
+      send = await sendWhatsAppMessage(
+        fromNumber,
+        response,
+        auth_token,
+        origin
+      );
+    }
 
     if (!send.success) {
       return { success: false, error: send.error };
@@ -189,8 +236,9 @@ ${contextText || ""}
         from_number: toNumber,
         to_number: fromNumber,
         received_at: new Date().toISOString(),
-        content_type: "text",
+        content_type: isVoiceRequest && finalResponseUrl ? "audio" : "text",
         content_text: response,
+        raw_payload: { audio_url: finalResponseUrl }, // Optional tracking
         sender_name: "AI Assistant",
         event_type: "MtMessage",
         is_in_24_window: true,

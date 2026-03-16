@@ -73,6 +73,65 @@ export async function sendWhatsAppMessage(
 }
 
 /**
+ * Send an audio message via WhatsApp using 11za.in API
+ */
+export async function sendWhatsAppAudio(
+    phoneNumber: string,
+    audioUrl: string,
+    authToken: string,
+    originWebsite: string
+): Promise<SendMessageResult> {
+    try {
+        if (!authToken || !originWebsite) {
+            return {
+                success: false,
+                error: "WhatsApp API credentials not provided",
+            };
+        }
+
+        const payload = {
+            sendto: phoneNumber,
+            authToken: authToken,
+            originWebsite: originWebsite,
+            contentType: "audio",
+            audioUrl: audioUrl,
+        };
+
+        console.log(`Sending WhatsApp audio to ${phoneNumber}...`);
+
+        const response = await fetch(WHATSAPP_API_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error("WhatsApp Audio API error:", data);
+            return {
+                success: false,
+                error: `WhatsApp API returned ${response.status}`,
+                response: data,
+            };
+        }
+
+        return {
+            success: true,
+            response: data,
+        };
+    } catch (error) {
+        console.error("Error sending WhatsApp audio:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+        };
+    }
+}
+
+/**
  * Send a template message via WhatsApp using 11za.in API
  * (For future use if you need template messages)
  */
