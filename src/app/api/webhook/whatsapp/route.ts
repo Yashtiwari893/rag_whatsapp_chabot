@@ -94,8 +94,10 @@ export async function POST(req: Request) {
         payload.content.media?.type === "voice" ||
         payload.content.media?.type === "audio"
       ) {
+        console.log("🎤 Voice message detected, starting STT...");
         const stt = await speechToText(mediaUrl!);
         finalText = stt?.text?.trim() || null;
+        console.log("📝 Transcription result:", finalText);
       }
     }
 
@@ -219,7 +221,7 @@ export async function POST(req: Request) {
     const result = await generateAutoResponse(
       payload.from,
       payload.to,
-      payload.content?.text || null,
+      finalText || payload.content?.text || null, // Priority: Transcribed text -> Normal text
       payload.messageId,
       mediaUrl || undefined // Pass mediaUrl for voice-to-voice support
     );

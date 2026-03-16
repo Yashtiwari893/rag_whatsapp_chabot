@@ -30,6 +30,8 @@ export async function speechToText(
             model: "whisper-large-v3",
         });
 
+        console.log("✅ Transcription finished by Groq");
+
         fs.unlinkSync(audioPath);
 
         const text = transcription.text?.trim();
