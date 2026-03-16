@@ -94,10 +94,10 @@ export async function sendWhatsAppAudio(
             authToken: authToken,
             originWebsite: originWebsite,
             contentType: "audio",
-            audioUrl: audioUrl,
+            mediaUrl: audioUrl,
         };
 
-        console.log(`Sending WhatsApp audio to ${phoneNumber}...`);
+        console.log(`Sending WhatsApp audio to ${phoneNumber}... URL: ${audioUrl}`);
 
         const response = await fetch(WHATSAPP_API_URL, {
             method: "POST",
