@@ -135,7 +135,7 @@ export async function generateAutoResponse(
     const matches = await retrieveRelevantChunksFromFiles(
       embedding,
       fileIds,
-      3
+      2
     );
 
     const contextText = matches.map((m) => m.chunk).join("\n\n");
@@ -163,7 +163,7 @@ ${contextText || ""}
       max_tokens: 500,
       messages: [
         { role: "system", content: systemPrompt },
-        ...history.slice(-5),
+        ...history.slice(-3),
         { role: "user", content: userText },
       ],
     });
