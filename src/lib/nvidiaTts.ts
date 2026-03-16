@@ -10,7 +10,11 @@ export async function textToSpeech(text: string, language: string = "english"): 
     throw new Error("NVIDIA_API_KEY is not configured in .env");
   }
 
+  // Truncate text if it's too long for TTS (NVIDIA/NVCF often have limits)
+  const truncatedText = text.length > 500 ? text.substring(0, 500) + "..." : text;
+
   console.log(`🔊 Converting text to speech (${language}) using NVIDIA Magpie (NVCF)...`);
+  console.log(`📝 Text length: ${text.length}, Truncated length: ${truncatedText.length}`);
 
   const langMap: Record<string, string> = {
     english: "en-US",
@@ -28,7 +32,7 @@ export async function textToSpeech(text: string, language: string = "english"): 
       NVIDIA_API_URL,
       {
         requestBody: {
-          text: text,
+          text: truncatedText,
           language_code: languageCode,
           voice: voice,
           encoding: "WAV", // Request WAV format
