@@ -11,7 +11,7 @@ export async function embedText(text: string, retries = 3): Promise<number[]> {
 
     const payload = JSON.stringify({
         model: "mistral-embed",
-        inputs: [text],
+        input: [text],
     });
 
     for (let attempt = 0; attempt <= retries; attempt++) {
