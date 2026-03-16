@@ -4,7 +4,7 @@ import { retrieveRelevantChunksFromFiles } from "./retrieval";
 import { getFilesForPhoneNumber } from "./phoneMapping";
 import { sendWhatsAppMessage, sendWhatsAppAudio } from "./whatsappSender";
 import { speechToText } from "./speechToText";
-import { textToSpeech } from "./nvidiaTts";
+import { textToSpeech } from "./edgeTts";
 import Groq from "groq-sdk";
 
 const groq = new Groq({
