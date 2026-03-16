@@ -3,7 +3,7 @@ import { extractPdfText } from "@/lib/pdf";
 import { chunkText } from "@/lib/chunk";
 import { embedText } from "@/lib/embeddings";
 import { supabase } from "@/lib/supabaseClient";
-import { Mistral } from '@mistralai/mistralai';
+import axios from 'axios';
 
 export const runtime = "nodejs";
 
@@ -62,19 +62,26 @@ export async function POST(req: Request) {
             const dataUrl = `data:${fileType};base64,${base64Image}`;
 
             if (processingMode === "ocr") {
-                // Use Mistral OCR API
-                const client = new Mistral({ apiKey: mistralApiKey });
-
-                const ocrResponse = await client.ocr.process({
-                    model: "mistral-ocr-latest",
-                    document: {
-                        type: "image_url",
-                        imageUrl: dataUrl,
+                // Use Mistral OCR API with axios to avoid 411 error
+                const ocrResponse = await axios.post(
+                    "https://api.mistral.ai/v1/ocr",
+                    {
+                        model: "mistral-ocr-latest",
+                        document: {
+                            type: "image_url",
+                            imageUrl: dataUrl,
+                        },
+                        include_image_base64: true
                     },
-                    includeImageBase64: true
-                });
+                    {
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${mistralApiKey}`
+                        }
+                    }
+                );
 
-                const respAny = ocrResponse as any;
+                const respAny = ocrResponse.data as any;
 
                 if (typeof respAny.text === "string" && respAny.text.length > 0) {
                     extractedText = respAny.text;
@@ -92,14 +99,10 @@ export async function POST(req: Request) {
                     extractedText = respAny.blocks.map((b: any) => b.text || '').filter(Boolean).join('\n');
                 }
             } else {
-                // Use Pixtral vision model
-                const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${mistralApiKey}`,
-                    },
-                    body: JSON.stringify({
+                // Use Pixtral vision model with axios
+                const response = await axios.post(
+                    'https://api.mistral.ai/v1/chat/completions',
+                    {
                         model: "pixtral-12b-2409",
                         messages: [
                             {
@@ -118,15 +121,16 @@ export async function POST(req: Request) {
                                 ]
                             }
                         ]
-                    })
-                });
+                    },
+                    {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${mistralApiKey}`,
+                        }
+                    }
+                );
 
-                if (!response.ok) {
-                    throw new Error(`Mistral API error: ${response.statusText}`);
-                }
-
-                const chatResponse = await response.json();
-                extractedText = chatResponse.choices[0].message.content || "";
+                extractedText = (response.data as any).choices[0].message.content || "";
             }
         } else {
             return NextResponse.json({

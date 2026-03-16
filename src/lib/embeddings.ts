@@ -1,41 +1,49 @@
-import { Mistral } from "@mistralai/mistralai";
+import axios from "axios";
 
-const client = new Mistral({
-    apiKey: process.env.MISTRAL_API_KEY!,
-});
+const MISTRAL_API_URL = "https://api.mistral.ai/v1/embeddings";
 
 export async function embedText(text: string, retries = 3): Promise<number[]> {
+    const apiKey = process.env.MISTRAL_API_KEY;
+
+    if (!apiKey) {
+        throw new Error("MISTRAL_API_KEY is not configured");
+    }
+
+    const payload = JSON.stringify({
+        model: "mistral-embed",
+        inputs: [text],
+    });
+
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            const response = await client.embeddings.create({
-                model: "mistral-embed", // consistent with docs
-                inputs: [text],
-            });
+            const response = await axios.post(
+                MISTRAL_API_URL,
+                payload,
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${apiKey}`,
+                    },
+                }
+            );
 
-            const embedding = response.data[0]?.embedding;
+            const embedding = (response.data as any).data?.[0]?.embedding;
             if (!embedding || !Array.isArray(embedding)) {
-                throw new Error("Invalid embedding response from API");
+                throw new Error("Invalid embedding response from Mistral API");
             }
 
-            return embedding; // array of 1024 floats
-        } catch (error: unknown) {
-            const isRateLimitError =
-                error &&
-                typeof error === "object" &&
-                "statusCode" in error &&
-                error.statusCode === 429;
-
-            if (isRateLimitError && attempt < retries) {
-                // Exponential backoff: wait 2^attempt seconds
+            return embedding;
+        } catch (error: any) {
+            const statusCode = error.response?.status;
+            
+            if (statusCode === 429 && attempt < retries) {
                 const waitTime = Math.pow(2, attempt) * 1000;
-                console.log(
-                    `Rate limit hit. Retrying in ${waitTime / 1000}s (attempt ${attempt + 1}/${retries})...`
-                );
+                console.log(`Rate limit hit. Retrying in ${waitTime / 1000}s...`);
                 await new Promise((resolve) => setTimeout(resolve, waitTime));
                 continue;
             }
 
-            // Re-throw if not a rate limit error or out of retries
+            console.error("Embedding API Error:", error.response?.data || error.message);
             throw error;
         }
     }
