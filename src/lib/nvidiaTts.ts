@@ -27,10 +27,12 @@ export async function textToSpeech(text: string, language: string = "english"): 
     const response = await axios.post(
       NVIDIA_API_URL,
       {
-        text: text,
-        language_code: languageCode,
-        voice: voice,
-        encoding: "WAV", // Request WAV format
+        requestBody: {
+          text: text,
+          language_code: languageCode,
+          voice: voice,
+          encoding: "WAV", // Request WAV format
+        }
       },
       {
         headers: {
