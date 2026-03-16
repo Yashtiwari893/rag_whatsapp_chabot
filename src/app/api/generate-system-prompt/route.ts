@@ -89,19 +89,26 @@ Create a system prompt for a WhatsApp chatbot with this intent:
         const systemPrompt = completion.choices[0]?.message?.content?.trim();
 
         if (!systemPrompt) {
-            throw new Error("Failed to generate system prompt");
+            console.error("❌ Groq returned no content");
+            throw new Error("LLM failed to generate content. Please check your Groq API quota or model availability.");
         }
 
-        console.log("Generated system prompt:", systemPrompt);
+        console.log("✅ Generated system prompt successfully");
 
         // Check if phone number already exists
-        const { data: existingMappings } = await supabase
+        const { data: existingMappings, error: fetchError } = await supabase
             .from("phone_document_mapping")
             .select("*")
             .eq("phone_number", phone_number);
 
+        if (fetchError) {
+            console.error("❌ Supabase fetch error:", fetchError);
+            throw new Error(`Database fetch failed: ${fetchError.message}`);
+        }
+
         if (existingMappings && existingMappings.length > 0) {
-            const { error } = await supabase
+            console.log("📝 Updating existing mapping...");
+            const { error: updateError } = await supabase
                 .from("phone_document_mapping")
                 .update({
                     intent,
@@ -109,18 +116,25 @@ Create a system prompt for a WhatsApp chatbot with this intent:
                 })
                 .eq("phone_number", phone_number);
 
-            if (error) throw error;
+            if (updateError) {
+                console.error("❌ Supabase update error:", updateError);
+                throw new Error(`Database update failed: ${updateError.message}. Did you run the migration?`);
+            }
         } else {
-            const { error } = await supabase
+            console.log("➕ Inserting new mapping...");
+            const { error: insertError } = await supabase
                 .from("phone_document_mapping")
                 .insert({
                     phone_number,
                     intent,
                     system_prompt: systemPrompt,
-                    file_id: null,
+                    file_id: null, // This requires file_id to be nullable in DB
                 });
 
-            if (error) throw error;
+            if (insertError) {
+                console.error("❌ Supabase insert error:", insertError);
+                throw new Error(`Database insert failed: ${insertError.message}. Check if file_id is nullable.`);
+            }
         }
 
         return NextResponse.json({
@@ -129,15 +143,14 @@ Create a system prompt for a WhatsApp chatbot with this intent:
             intent,
         });
 
-    } catch (error) {
-        console.error("System prompt generation error:", error);
+    } catch (error: any) {
+        console.error("🔥 SYSTEM PROMPT API ERROR:", error);
 
         return NextResponse.json(
             {
-                error:
-                    error instanceof Error
-                        ? error.message
-                        : "Failed to generate system prompt",
+                success: false,
+                error: error.message || "An unexpected error occurred",
+                details: error.hint || undefined
             },
             { status: 500 }
         );
