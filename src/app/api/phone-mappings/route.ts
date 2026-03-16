@@ -84,18 +84,24 @@ export async function DELETE(req: Request) {
     try {
         const { searchParams } = new URL(req.url);
         const id = searchParams.get("id");
+        const phoneNumber = searchParams.get("phone_number");
 
-        if (!id) {
+        if (!id && !phoneNumber) {
             return NextResponse.json(
-                { error: "Mapping id is required" },
+                { error: "Mapping id or phone_number is required" },
                 { status: 400 }
             );
         }
 
-        const { error } = await supabase
-            .from("phone_document_mapping")
-            .delete()
-            .eq("id", id);
+        let query = supabase.from("phone_document_mapping").delete();
+
+        if (id) {
+            query = query.eq("id", id);
+        } else if (phoneNumber) {
+            query = query.eq("phone_number", phoneNumber);
+        }
+
+        const { error } = await query;
 
         if (error) {
             throw error;
